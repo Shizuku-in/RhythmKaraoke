@@ -159,7 +159,6 @@ function App() {
           onSetIsPlaying={transport.setIsPlaying}
           onSetPlaybackPositionMs={transport.setPlaybackPositionMs}
           onStop={transport.stop}
-          progress={transport.progress}
           seekStepMs={projectEditor.project.settings.seekStepMs}
           status={projectEditor.status}
         />

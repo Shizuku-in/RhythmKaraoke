@@ -1,4 +1,4 @@
-import { Box, Button, LinearProgress, Slider, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Button, Slider, Stack, Tooltip, Typography } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
 import FastForwardIcon from "@mui/icons-material/FastForward";
 import FastRewindIcon from "@mui/icons-material/FastRewind";
@@ -25,7 +25,6 @@ export function TransportBar(props: {
   onSetIsPlaying: (isPlaying: boolean) => void;
   onSetPlaybackPositionMs: (positionMs: number) => void;
   onStop: () => void;
-  progress: number;
   seekStepMs: number;
   status: string;
 }) {
@@ -45,7 +44,6 @@ export function TransportBar(props: {
     onSetIsPlaying,
     onSetPlaybackPositionMs,
     onStop,
-    progress,
     seekStepMs,
     status,
   } = props;
@@ -133,7 +131,6 @@ export function TransportBar(props: {
             {formatTime(durationMs)}
           </Typography>
         </Stack>
-        <LinearProgress variant="determinate" value={Math.min(100, progress)} />
       </Box>
       <Typography variant="caption" className="status-text">
         {status}

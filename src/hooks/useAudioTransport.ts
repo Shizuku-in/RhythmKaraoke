@@ -9,7 +9,6 @@ export function useAudioTransport(options: {
   const [currentTimeMs, setCurrentTimeMs] = useState(0);
   const [durationMs, setDurationMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const progress = durationMs > 0 ? (currentTimeMs / durationMs) * 100 : 0;
 
   const play = useCallback(async () => {
     if (!audioRef.current) {
@@ -61,7 +60,6 @@ export function useAudioTransport(options: {
     currentTimeMs,
     durationMs,
     isPlaying,
-    progress,
     pause,
     play,
     seekBy,
