@@ -17,6 +17,7 @@ import {
   setTimeAtPoint,
   shouldAutoCheck,
   splitGraphemes,
+  splitJapaneseMora,
   validateProject,
 } from "./rhythmProject";
 
@@ -139,6 +140,8 @@ describe("rhythm project model", () => {
     expect(countJapaneseMora("きゃ")).toBe(1);
     expect(countJapaneseMora("っ")).toBe(1);
     expect(countJapaneseMora("ー")).toBe(1);
+    expect(splitJapaneseMora("はる")).toEqual(["は", "る"]);
+    expect(splitJapaneseMora("きゃっほー")).toEqual(["きゃ", "っ", "ほ", "ー"]);
   });
 
   it("builds ruby-aware cells and check counts from kuromoji-style tokens", () => {

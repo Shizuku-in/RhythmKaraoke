@@ -51,7 +51,13 @@ describe("ruby editor", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
     expect(document.activeElement).toHaveClass("editor-pane");
-    expect(screen.getByText("こい")).toBeInTheDocument();
+    expect(
+      screen.getByText((_, element) =>
+        Boolean(
+          element?.classList.contains("cell-ruby") && element.textContent === "こい",
+        ),
+      ),
+    ).toBeInTheDocument();
   });
 
   it("closes with Esc without committing and restores editor focus", async () => {
@@ -68,6 +74,22 @@ describe("ruby editor", () => {
     });
     expect(document.activeElement).toHaveClass("editor-pane");
     expect(screen.queryByText("こい")).not.toBeInTheDocument();
+  });
+
+  it("closes when clicking away", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /lyrics/i }));
+    await user.keyboard("{F2}");
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByText("RhythmKaraoke"));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+    expect(document.activeElement).toHaveClass("editor-pane");
   });
 
   it("keeps the popper open after connecting cells and refreshes the selected cell", async () => {

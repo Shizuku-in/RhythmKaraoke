@@ -157,7 +157,7 @@ button {
 }
 
 .cell-ruby {
-  color: #ffdf9f;
+  color: #9da8c8;
   display: block;
   font-family: "Yu Gothic UI", "Meiryo", sans-serif;
   font-size: 10px;
@@ -166,6 +166,10 @@ button {
   min-width: 12px;
   text-align: center;
   white-space: nowrap;
+}
+
+.cell-ruby-mora.timed {
+  color: #d6ccff;
 }
 
 .cell-text {
@@ -244,8 +248,21 @@ button {
   z-index: 1300;
 }
 
+.ruby-editor-transition {
+  transform-origin: left bottom;
+}
+
 .ruby-editor-paper {
   padding: 10px;
+  transform: translateY(0);
+  transition:
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.ruby-connect-button {
+  border: 1px solid #c9d3df;
+  color: #176b87;
 }
 
 .transport {

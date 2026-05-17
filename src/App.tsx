@@ -4,8 +4,11 @@ import {
   Box,
   Button,
   Chip,
+  ClickAwayListener,
   CssBaseline,
   Divider,
+  Fade,
+  IconButton,
   LinearProgress,
   Paper,
   Popper,
@@ -35,7 +38,7 @@ import TimerIcon from "@mui/icons-material/Timer";
 import UndoIcon from "@mui/icons-material/Undo";
 import RedoIcon from "@mui/icons-material/Redo";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
-import MergeTypeIcon from "@mui/icons-material/MergeType";
+import AddIcon from "@mui/icons-material/Add";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
@@ -61,6 +64,7 @@ import {
   setCellRuby,
   setKeyUpAtPoint,
   setTimeAtPoint,
+  splitJapaneseMora,
   mergeCellWithNext,
   updateAudioMetadata,
   validateProject,
@@ -505,6 +509,12 @@ function App() {
         return;
       }
 
+      if (event.key === "Escape" && rubyEditorOpen) {
+        event.preventDefault();
+        closeRubyEditor();
+        return;
+      }
+
       if (event.key === "F2") {
         event.preventDefault();
         openRubyEditor();
@@ -625,6 +635,8 @@ function App() {
       tagPoint,
       undo,
       openRubyEditor,
+      rubyEditorOpen,
+      closeRubyEditor,
     ],
   );
 
@@ -880,36 +892,48 @@ function App() {
           className="ruby-editor-popper"
           open={rubyEditorOpen && Boolean(rubyAnchorEl)}
           placement="top-start"
+          transition
         >
-          <Paper className="ruby-editor-paper" elevation={6} role="dialog">
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-              <TextField
-                autoFocus
-                label="Ruby"
-                onChange={(event) => setRubyInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    commitRubyEdit();
-                  }
+          {({ TransitionProps }) => (
+            <Fade {...TransitionProps} timeout={160}>
+              <div className="ruby-editor-transition">
+                <ClickAwayListener onClickAway={closeRubyEditor}>
+                  <Paper className="ruby-editor-paper" elevation={6} role="dialog">
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                      <TextField
+                        autoFocus
+                        label="Ruby"
+                        onChange={(event) => setRubyInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            commitRubyEdit();
+                          }
 
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    closeRubyEditor();
-                  }
-                }}
-                size="small"
-                value={rubyInput}
-              />
-              <Button
-                onClick={connectSelectedCell}
-                startIcon={<MergeTypeIcon />}
-                variant="outlined"
-              >
-                连接
-              </Button>
-            </Stack>
-          </Paper>
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            closeRubyEditor();
+                          }
+                        }}
+                        size="small"
+                        value={rubyInput}
+                      />
+                      <Tooltip title="连接">
+                        <IconButton
+                          aria-label="连接"
+                          className="ruby-connect-button"
+                          onClick={connectSelectedCell}
+                          size="small"
+                        >
+                          <AddIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
+                  </Paper>
+                </ClickAwayListener>
+              </div>
+            </Fade>
+          )}
         </Popper>
 
         <Box className="transport">
@@ -1025,7 +1049,13 @@ function LyricCellView(props: {
     ...checks.filter((check) => !check.keyUp),
     ...checks.filter((check) => check.keyUp),
   ];
-  const hasTimedCheck = checks.some((check) => check.timeMs !== null);
+  const keyDownChecks = checks.filter((check) => !check.keyUp);
+  const timedKeyDownCount = keyDownChecks.filter((check) => check.timeMs !== null).length;
+  const rubyMora = ruby ? splitJapaneseMora(ruby) : [];
+  const hasTimedCheck = ruby
+    ? keyDownChecks.length > 0 &&
+      keyDownChecks.every((check) => check.timeMs !== null)
+    : checks.some((check) => check.timeMs !== null);
   const hasKeyUp = checks.some((check) => check.keyUp);
 
   return (
@@ -1044,7 +1074,23 @@ function LyricCellView(props: {
       ref={refCallback}
       type="button"
     >
-      {ruby ? <span className="cell-ruby">{ruby}</span> : <span className="cell-ruby" />}
+      {ruby ? (
+        <span className="cell-ruby">
+          {rubyMora.map((mora, index) => (
+            <span
+              className={[
+                "cell-ruby-mora",
+                index < timedKeyDownCount ? "timed" : "",
+              ].join(" ")}
+              key={`${mora}-${index}`}
+            >
+              {mora}
+            </span>
+          ))}
+        </span>
+      ) : (
+        <span className="cell-ruby" />
+      )}
       <span className="cell-text">{cellText === " " ? "\u00a0" : cellText}</span>
       <span className="check-row">
         {orderedChecks.map((check, checkIndex) => (

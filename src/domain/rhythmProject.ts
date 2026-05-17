@@ -397,30 +397,36 @@ function isZeroMoraText(text: string): boolean {
 export function countJapaneseMora(text: string): number {
   const normalized = kanaToHiragana(text);
   const graphemes = splitGraphemes(normalized);
-  let count = 0;
-  let sawJapanese = false;
+  return splitJapaneseMora(graphemes).length;
+}
+
+export function splitJapaneseMora(textOrGraphemes: string | string[]): string[] {
+  const graphemes = Array.isArray(textOrGraphemes)
+    ? textOrGraphemes
+    : splitGraphemes(kanaToHiragana(textOrGraphemes));
+  const mora: string[] = [];
 
   graphemes.forEach((grapheme) => {
     if (isZeroMoraText(grapheme)) {
       return;
     }
 
-    if (isSmallKanaCombination(grapheme) && sawJapanese) {
+    if (isSmallKanaCombination(grapheme) && mora.length > 0) {
+      mora[mora.length - 1] += grapheme;
       return;
     }
 
     if (isKana(grapheme) || isKanji(grapheme) || isProlongedSoundMark(grapheme)) {
-      sawJapanese = true;
-      count += 1;
+      mora.push(grapheme);
       return;
     }
 
     if (/^[A-Za-z0-9]$/u.test(grapheme)) {
-      count += 1;
+      mora.push(grapheme);
     }
   });
 
-  return count;
+  return mora;
 }
 
 export function getRequiredKeyDownCount(cell: Pick<LyricCell, "ruby" | "text">): number {
