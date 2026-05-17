@@ -926,6 +926,21 @@ export function removeLastCheckAtCell(
   };
 }
 
+export function removeReleaseMarkerAtCell(
+  project: RhythmProject,
+  position: CellPosition,
+): EditResult {
+  const nextProject = updateCell(project, position, (cell) => ({
+    ...cell,
+    checks: cell.checks.filter((check) => !check.keyUp),
+  }));
+
+  return {
+    project: nextProject,
+    pointIndex: clampPointIndex(nextProject, findFirstUntimedPointIndex(nextProject)),
+  };
+}
+
 export function clearChecksAtCell(
   project: RhythmProject,
   position: CellPosition,

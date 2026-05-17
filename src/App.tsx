@@ -10,6 +10,10 @@ import {
   Fade,
   IconButton,
   LinearProgress,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Paper,
   Popper,
   Slider,
@@ -39,7 +43,9 @@ import UndoIcon from "@mui/icons-material/Undo";
 import RedoIcon from "@mui/icons-material/Redo";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import AddIcon from "@mui/icons-material/Add";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DisabledByDefaultOutlinedIcon from "@mui/icons-material/DisabledByDefaultOutlined";
+import SquareOutlinedIcon from "@mui/icons-material/SquareOutlined";
+import { type MouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
   type CellPosition,
@@ -60,6 +66,7 @@ import {
   getFirstCellPosition,
   removeLastCheckAtCell,
   removePreviousTime,
+  removeReleaseMarkerAtCell,
   serializeProject,
   setCellRuby,
   setKeyUpAtPoint,
@@ -91,6 +98,12 @@ interface SpacePress {
   startedAt: number;
   baseProject?: RhythmProject;
   foldWithPrevious?: boolean;
+}
+
+interface CellContextMenu {
+  mouseX: number;
+  mouseY: number;
+  position: CellPosition;
 }
 
 const theme = createTheme({
@@ -161,6 +174,7 @@ function App() {
   const [isAutoRubyRunning, setIsAutoRubyRunning] = useState(false);
   const [rubyEditorOpen, setRubyEditorOpen] = useState(false);
   const [rubyInput, setRubyInput] = useState("");
+  const [cellContextMenu, setCellContextMenu] = useState<CellContextMenu | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const editorHostRef = useRef<HTMLDivElement | null>(null);
   const cellButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -262,6 +276,11 @@ function App() {
       setIsAutoRubyRunning(false);
     }
   }, [commitProject, focusEditorHost, project]);
+
+  const closeCellContextMenu = useCallback(() => {
+    setCellContextMenu(null);
+    focusEditorHost();
+  }, [focusEditorHost]);
 
   const undo = useCallback(() => {
     setHistory((previous) => {
@@ -483,6 +502,73 @@ function App() {
     },
     [checkRefs],
   );
+
+  const handleCellContextMenu = useCallback(
+    (event: MouseEvent, position: CellPosition) => {
+      event.preventDefault();
+      setRubyEditorOpen(false);
+      handleCellSelect(position);
+      setCellContextMenu({
+        mouseX: event.clientX + 2,
+        mouseY: event.clientY - 6,
+        position,
+      });
+    },
+    [handleCellSelect],
+  );
+
+  const addReleaseMarkerAtContextCell = useCallback(() => {
+    const position = cellContextMenu?.position;
+
+    if (!position) {
+      return;
+    }
+
+    const cell = project.lines[position.lineIndex]?.cells[position.cellIndex];
+
+    if (!cell || cell.checks.some((check) => check.keyUp)) {
+      closeCellContextMenu();
+      return;
+    }
+
+    const result = addCheckAtCell(project, position, true);
+    commitProject(result.project, result.pointIndex, position);
+    setStatus("Release marker added");
+    closeCellContextMenu();
+  }, [cellContextMenu, closeCellContextMenu, commitProject, project]);
+
+  const removeReleaseMarkerAtContextCell = useCallback(() => {
+    const position = cellContextMenu?.position;
+
+    if (!position) {
+      return;
+    }
+
+    const cell = project.lines[position.lineIndex]?.cells[position.cellIndex];
+
+    if (!cell || !cell.checks.some((check) => check.keyUp)) {
+      closeCellContextMenu();
+      return;
+    }
+
+    const result = removeReleaseMarkerAtCell(project, position);
+    commitProject(result.project, result.pointIndex, position);
+    setStatus("Release marker removed");
+    closeCellContextMenu();
+  }, [cellContextMenu, closeCellContextMenu, commitProject, project]);
+
+  const connectContextCell = useCallback(() => {
+    const position = cellContextMenu?.position;
+
+    if (!position) {
+      return;
+    }
+
+    const result = mergeCellWithNext(project, position);
+    commitProject(result.project, result.pointIndex, result.selectedCell);
+    setStatus("Cells connected");
+    closeCellContextMenu();
+  }, [cellContextMenu, closeCellContextMenu, commitProject, project]);
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent) => {
@@ -835,6 +921,9 @@ function App() {
                             isSelected={effectiveMode === "check" && isSelected}
                             key={cell.id}
                             onSelect={() => handleCellSelect({ lineIndex, cellIndex })}
+                            onContextMenu={(event) =>
+                              handleCellContextMenu(event, { lineIndex, cellIndex })
+                            }
                             refCallback={(element) => {
                               if (element) {
                                 cellButtonRefs.current.set(cell.id, element);
@@ -887,6 +976,66 @@ function App() {
           </Box>
         </Box>
 
+        <Menu
+          anchorPosition={
+            cellContextMenu
+              ? { left: cellContextMenu.mouseX, top: cellContextMenu.mouseY }
+              : undefined
+          }
+          anchorReference="anchorPosition"
+          onClose={closeCellContextMenu}
+          open={Boolean(cellContextMenu)}
+        >
+          {(() => {
+            const contextCell = cellContextMenu
+              ? project.lines[cellContextMenu.position.lineIndex]?.cells[
+                  cellContextMenu.position.cellIndex
+                ]
+              : null;
+            const hasReleaseMarker = Boolean(
+              contextCell?.checks.some((check) => check.keyUp),
+            );
+
+            return (
+              <>
+          <MenuItem
+            disabled={Boolean(
+              cellContextMenu &&
+                !project.lines[cellContextMenu.position.lineIndex]?.cells[
+                  cellContextMenu.position.cellIndex + 1
+                ],
+            )}
+            onClick={connectContextCell}
+          >
+            <ListItemIcon>
+              <AddIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Connect</ListItemText>
+          </MenuItem>
+          <MenuItem
+            onClick={
+              hasReleaseMarker
+                ? removeReleaseMarkerAtContextCell
+                : addReleaseMarkerAtContextCell
+            }
+            sx={hasReleaseMarker ? { color: "error.main" } : undefined}
+          >
+            <ListItemIcon sx={hasReleaseMarker ? { color: "error.main" } : undefined}>
+              {hasReleaseMarker ? (
+                <DisabledByDefaultOutlinedIcon fontSize="small" />
+              ) : (
+                <SquareOutlinedIcon fontSize="small" />
+              )}
+            </ListItemIcon>
+            <ListItemText>
+              {hasReleaseMarker ? "Remove release marker" : "Add release marker"}
+            </ListItemText>
+          </MenuItem>
+              </>
+            );
+          })()}
+        </Menu>
+
         <Popper
           anchorEl={rubyAnchorEl}
           className="ruby-editor-popper"
@@ -918,9 +1067,9 @@ function App() {
                         size="small"
                         value={rubyInput}
                       />
-                      <Tooltip title="连接">
+                      <Tooltip title="Connect">
                         <IconButton
-                          aria-label="连接"
+                          aria-label="Connect"
                           className="ruby-connect-button"
                           onClick={connectSelectedCell}
                           size="small"
@@ -1042,9 +1191,19 @@ function LyricCellView(props: {
   isCurrent: boolean;
   isSelected: boolean;
   onSelect: () => void;
+  onContextMenu: (event: MouseEvent) => void;
   refCallback: (element: HTMLButtonElement | null) => void;
 }) {
-  const { cellText, ruby, checks, isCurrent, isSelected, onSelect, refCallback } = props;
+  const {
+    cellText,
+    ruby,
+    checks,
+    isCurrent,
+    isSelected,
+    onSelect,
+    onContextMenu,
+    refCallback,
+  } = props;
   const orderedChecks = [
     ...checks.filter((check) => !check.keyUp),
     ...checks.filter((check) => check.keyUp),
@@ -1071,6 +1230,7 @@ function LyricCellView(props: {
         event.currentTarget.blur();
         onSelect();
       }}
+      onContextMenu={onContextMenu}
       ref={refCallback}
       type="button"
     >
