@@ -16,6 +16,7 @@ import {
   setCellRuby,
   setTimeAtPoint,
   shouldAutoCheck,
+  splitCell,
   splitGraphemes,
   splitJapaneseMora,
   validateProject,
@@ -35,7 +36,7 @@ describe("rhythm project model", () => {
     expect(shouldAutoCheck(" ", "a")).toBe(false);
   });
 
-  it("creates checks for CJK characters and English word starts", () => {
+  it("creates checks for CJK characters and English words", () => {
     const project = createProjectFromLyrics("答えはいつも\nYou'll be right");
     const refs = getCheckRefs(project);
 
@@ -48,18 +49,18 @@ describe("rhythm project model", () => {
       "つ",
       "も",
       "も",
-      "Y",
-      "l",
-      "b",
-      "e",
-      "r",
-      "t",
+      "You'll",
+      "You'll",
+      "be",
+      "be",
+      "right",
+      "right",
     ]);
     expect(refs.filter((ref) => ref.check.keyUp).map((ref) => ref.cell.text)).toEqual([
       "も",
-      "l",
-      "e",
-      "t",
+      "You'll",
+      "be",
+      "right",
     ]);
   });
 
@@ -94,12 +95,12 @@ describe("rhythm project model", () => {
 
   it("adds manual checks and round-trips JSON", () => {
     const project = createProjectFromLyrics("abc");
-    const result = addCheckAtCell(project, { lineIndex: 0, cellIndex: 1 });
+    const result = addCheckAtCell(project, { lineIndex: 0, cellIndex: 0 });
     const serialized = serializeProject(result.project);
     const parsed = deserializeProject(serialized);
 
     expect(getCheckRefs(parsed)).toHaveLength(3);
-    expect(getCheckRefs(parsed)[result.pointIndex].cell.text).toBe("b");
+    expect(getCheckRefs(parsed)[result.pointIndex].cell.text).toBe("abc");
   });
 
   it("sets timing in sequence and leaves the release point empty", () => {
@@ -134,11 +135,11 @@ describe("rhythm project model", () => {
   it("counts Japanese mora for kana combinations, small tsu, and long vowels", () => {
     expect(countJapaneseMora("とど")).toBe(2);
     expect(countJapaneseMora("こい")).toBe(2);
-    expect(countJapaneseMora("いっ")).toBe(2);
+    expect(countJapaneseMora("いっ")).toBe(1);
     expect(countJapaneseMora("ぽ")).toBe(1);
     expect(countJapaneseMora("こいごころ")).toBe(5);
     expect(countJapaneseMora("きゃ")).toBe(1);
-    expect(countJapaneseMora("っ")).toBe(1);
+    expect(countJapaneseMora("っ")).toBe(0);
     expect(countJapaneseMora("ー")).toBe(1);
     expect(splitJapaneseMora("はる")).toEqual(["は", "る"]);
     expect(splitJapaneseMora("きゃっほー")).toEqual(["きゃ", "っ", "ほ", "ー"]);
@@ -169,7 +170,19 @@ describe("rhythm project model", () => {
       ["ぽ", undefined],
       ["恋心", "こいごころ"],
     ]);
-    expect(cells.map(getRequiredKeyDownCount)).toEqual([2, 1, 1, 1, 2, 0, 2, 1, 5]);
+    expect(cells.map(getRequiredKeyDownCount)).toEqual([2, 1, 1, 1, 2, 0, 1, 1, 5]);
+  });
+
+  it("folds small tsu into the previous auto-ruby cell without adding ruby or a timing point", () => {
+    const cells = createRubyCellsForLine("切った", [
+      { surface_form: "切った", reading: "キッタ" },
+    ]);
+
+    expect(cells.map((cell) => [cell.text, cell.ruby])).toEqual([
+      ["切っ", "き"],
+      ["た", undefined],
+    ]);
+    expect(cells.map(getRequiredKeyDownCount)).toEqual([1, 1]);
   });
 
   it("resizes checks when setting ruby manually", () => {
@@ -208,6 +221,29 @@ describe("rhythm project model", () => {
     ]);
   });
 
+  it("splits a merged cell and preserves distributed timings", () => {
+    const project = createProjectFromLyrics("\u3042\u3044");
+    const first = setTimeAtPoint(project, 0, 1000);
+    const second = setTimeAtPoint(first.project, first.pointIndex, 2000);
+    const merged = mergeCellWithNext(second.project, { lineIndex: 0, cellIndex: 0 });
+    const split = splitCell(merged.project, { lineIndex: 0, cellIndex: 0 });
+
+    expect(split.project.lines[0].cells.map((cell) => cell.text)).toEqual([
+      "\u3042",
+      "\u3044",
+    ]);
+    expect(getCheckRefs(split.project).map((ref) => ref.check.timeMs)).toEqual([
+      1000,
+      2000,
+      null,
+    ]);
+    expect(getCheckRefs(split.project).map((ref) => ref.check.keyUp)).toEqual([
+      false,
+      false,
+      true,
+    ]);
+  });
+
   it("applies auto ruby to the whole project", () => {
     const project = createProjectFromLyrics("届かない恋、いっぽ恋心");
     const result = applyAutoRuby(project, [
@@ -240,7 +276,7 @@ describe("rhythm project model", () => {
       1,
       2,
       0,
-      2,
+      1,
       1,
       5,
     ]);

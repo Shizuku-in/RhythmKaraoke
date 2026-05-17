@@ -6,6 +6,7 @@ import {
   addCheckAtCell,
   mergeCellWithNext,
   removeReleaseMarkerAtCell,
+  splitCell,
 } from "../domain/rhythmProject";
 
 export function useCellContextMenu(options: {
@@ -103,6 +104,19 @@ export function useCellContextMenu(options: {
     closeCellContextMenu();
   }, [cellContextMenu, closeCellContextMenu, commitProject, project, setStatus]);
 
+  const splitContextCell = useCallback(() => {
+    const position = cellContextMenu?.position;
+
+    if (!position) {
+      return;
+    }
+
+    const result = splitCell(project, position);
+    commitProject(result.project, result.pointIndex, result.selectedCell);
+    setStatus("Cell split");
+    closeCellContextMenu();
+  }, [cellContextMenu, closeCellContextMenu, commitProject, project, setStatus]);
+
   return {
     addReleaseMarkerAtContextCell,
     cellContextMenu,
@@ -110,5 +124,6 @@ export function useCellContextMenu(options: {
     connectContextCell,
     handleCellContextMenu,
     removeReleaseMarkerAtContextCell,
+    splitContextCell,
   };
 }

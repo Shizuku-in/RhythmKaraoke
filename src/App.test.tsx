@@ -24,7 +24,7 @@ vi.mock("./platform/autoRuby", () => ({
 describe("ruby editor", () => {
   beforeEach(() => {
     openLyricsFile.mockResolvedValue({
-      contents: "ab",
+      contents: "あい",
       name: "sample.txt",
     });
   });
@@ -163,5 +163,33 @@ describe("ruby editor", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Connect" }));
 
     expect(container.querySelectorAll(".lyric-cell")).toHaveLength(1);
+  });
+
+  it("splits cells from the cell context menu", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+
+    await user.click(screen.getByRole("button", { name: /lyrics/i }));
+
+    const firstCell = container.querySelector(".lyric-cell");
+    expect(firstCell).toBeInstanceOf(HTMLElement);
+
+    fireEvent.contextMenu(firstCell as HTMLElement, {
+      clientX: 120,
+      clientY: 160,
+    });
+    await user.click(await screen.findByRole("menuitem", { name: "Connect" }));
+    expect(container.querySelectorAll(".lyric-cell")).toHaveLength(1);
+
+    const mergedCell = container.querySelector(".lyric-cell");
+    expect(mergedCell).toBeInstanceOf(HTMLElement);
+
+    fireEvent.contextMenu(mergedCell as HTMLElement, {
+      clientX: 120,
+      clientY: 160,
+    });
+    await user.click(await screen.findByRole("menuitem", { name: "Split" }));
+
+    expect(container.querySelectorAll(".lyric-cell")).toHaveLength(2);
   });
 });

@@ -130,6 +130,7 @@ function App() {
           onClose={cellContextMenu.closeCellContextMenu}
           onConnect={cellContextMenu.connectContextCell}
           onRemoveReleaseMarker={cellContextMenu.removeReleaseMarkerAtContextCell}
+          onSplit={cellContextMenu.splitContextCell}
           project={projectEditor.project}
         />
 

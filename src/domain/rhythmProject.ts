@@ -143,6 +143,10 @@ function isAsciiWordPart(grapheme: string): boolean {
   return /^[A-Za-z0-9']$/.test(grapheme);
 }
 
+function isAsciiWordText(text: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9']*$/.test(text);
+}
+
 function isBoundarySpace(grapheme: string): boolean {
   return grapheme === " " || grapheme === "\u3000";
 }
@@ -184,8 +188,14 @@ function hasJapanese(text: string): boolean {
   return splitGraphemes(text).some((grapheme) => isKana(grapheme) || isKanji(grapheme));
 }
 
-function isSingableEnd(grapheme: string): boolean {
-  return isCjkOrKanaOrHangul(grapheme) || isAsciiWord(grapheme);
+function isSingableEnd(text: string): boolean {
+  const graphemes = splitGraphemes(text);
+  const lastGrapheme = graphemes[graphemes.length - 1];
+
+  return Boolean(
+    lastGrapheme &&
+      (isCjkOrKanaOrHangul(lastGrapheme) || isAsciiWord(lastGrapheme)),
+  );
 }
 
 export function shouldAutoCheck(
@@ -237,18 +247,45 @@ function orderChecksWithIndexes(
     .sort((left, right) => Number(left.check.keyUp) - Number(right.check.keyUp));
 }
 
-function createCell(grapheme: string, previousGrapheme: string | null): LyricCell {
-  const checks = shouldAutoCheck(grapheme, previousGrapheme)
-    ? [createCheck()]
-    : [];
+function createCell(text: string): LyricCell {
+  const checks = Array.from(
+    { length: getRequiredKeyDownCount({ text }) },
+    () => createCheck(),
+  );
 
   return {
     id: nextId("cell"),
-    text: grapheme,
+    text,
     checks,
     timeMs: null,
     keyUp: false,
   };
+}
+
+function splitLineToCellTexts(lineText: string): string[] {
+  return splitGraphemes(lineText).reduce<string[]>((cells, grapheme) => {
+    const previous = cells[cells.length - 1];
+
+    if (previous && (isSmallKanaCombination(grapheme) || isSmallTsu(grapheme))) {
+      cells[cells.length - 1] += grapheme;
+      return cells;
+    }
+
+    if (isAsciiWordPart(grapheme)) {
+      if (previous && isAsciiWordText(previous)) {
+        cells[cells.length - 1] += grapheme;
+        return cells;
+      }
+
+      if (isAsciiWord(grapheme)) {
+        cells.push(grapheme);
+        return cells;
+      }
+    }
+
+    cells.push(grapheme);
+    return cells;
+  }, []);
 }
 
 function findPreviousSingableCell(
@@ -310,12 +347,7 @@ export function createProjectFromLyrics(
   project.metadata.title = source?.name?.replace(/\.[^.]+$/, "") || "Untitled";
   project.metadata.lyricsSource = source;
   project.lines = rawLines.map((lineText) => {
-    let previous: string | null = null;
-    const cells = splitGraphemes(lineText).map((grapheme) => {
-      const cell = createCell(grapheme, previous);
-      previous = grapheme;
-      return cell;
-    });
+    const cells = splitLineToCellTexts(lineText).map((cellText) => createCell(cellText));
 
     return {
       id: nextId("line"),
@@ -397,7 +429,7 @@ function isZeroMoraText(text: string): boolean {
 export function countJapaneseMora(text: string): number {
   const normalized = kanaToHiragana(text);
   const graphemes = splitGraphemes(normalized);
-  return splitJapaneseMora(graphemes).length;
+  return splitJapaneseMora(graphemes).filter((mora) => !isSmallTsu(mora)).length;
 }
 
 export function splitJapaneseMora(textOrGraphemes: string | string[]): string[] {
@@ -434,6 +466,10 @@ export function getRequiredKeyDownCount(cell: Pick<LyricCell, "ruby" | "text">):
 
   if (isZeroMoraText(source)) {
     return 0;
+  }
+
+  if (isAsciiWordText(source)) {
+    return 1;
   }
 
   return countJapaneseMora(source);
@@ -520,6 +556,17 @@ function createCellFromDraft(draft: RubyCellDraft, coveredCells: LyricCell[]): L
   });
 }
 
+function createSplitCell(draft: RubyCellDraft, checks: CheckPoint[]): LyricCell {
+  return normalizeCell({
+    id: nextId("cell"),
+    text: draft.text,
+    ruby: draft.ruby,
+    checks,
+    timeMs: null,
+    keyUp: false,
+  });
+}
+
 function splitKanaToDrafts(text: string): RubyCellDraft[] {
   return splitGraphemes(text).reduce<RubyCellDraft[]>((drafts, grapheme) => {
     const previous = drafts[drafts.length - 1];
@@ -546,9 +593,7 @@ function pushRubyDraft(drafts: RubyCellDraft[], draft: RubyCellDraft): void {
     graphemes[0] &&
     isSmallTsu(graphemes[0]) &&
     !draft.ruby &&
-    previous &&
-    !previous.ruby &&
-    hasKana(previous.text)
+    previous
   ) {
     previous.text += graphemes[0];
 
@@ -563,7 +608,7 @@ function pushRubyDraft(drafts: RubyCellDraft[], draft: RubyCellDraft): void {
 }
 
 function splitOtherToDrafts(text: string): RubyCellDraft[] {
-  return splitGraphemes(text).map((grapheme) => ({ text: grapheme }));
+  return splitLineToCellTexts(text).map((cellText) => ({ text: cellText }));
 }
 
 function splitTokenToDrafts(token: RubyToken): RubyCellDraft[] {
@@ -792,6 +837,95 @@ export function mergeCellWithNext(
         mergedCell,
         ...currentLine.cells.slice(position.cellIndex + 2),
       ],
+    };
+  });
+  const nextProject = touchProject({ ...project, lines: nextLines });
+
+  return {
+    project: nextProject,
+    pointIndex: pointIndexForCell(nextProject, position),
+    selectedCell: position,
+  };
+}
+
+export function canSplitCell(cell: Pick<LyricCell, "text">): boolean {
+  return splitGraphemes(cell.text).length > 1;
+}
+
+function getSplitCellDrafts(cell: LyricCell): RubyCellDraft[] {
+  const graphemes = splitGraphemes(cell.text);
+  const shouldKeepRubyOnFirst =
+    Boolean(cell.ruby) &&
+    graphemes.length > 1 &&
+    graphemes
+      .slice(1)
+      .every((grapheme) => isSmallKanaCombination(grapheme) || isSmallTsu(grapheme));
+
+  return graphemes.map((grapheme, index) => ({
+    text: grapheme,
+    ruby: index === 0 && shouldKeepRubyOnFirst ? cell.ruby : undefined,
+  }));
+}
+
+export function splitCell(
+  project: RhythmProject,
+  position: CellPosition,
+): EditResult & { selectedCell: CellPosition } {
+  const line = project.lines[position.lineIndex];
+  const cell = line?.cells[position.cellIndex];
+
+  if (!line || !cell || !canSplitCell(cell)) {
+    return {
+      project,
+      pointIndex: pointIndexForCell(project, position),
+      selectedCell: position,
+    };
+  }
+
+  const drafts = getSplitCellDrafts(cell);
+  const requiredDownCounts = drafts.map(getRequiredKeyDownCount);
+  const totalRequiredDowns = requiredDownCounts.reduce(
+    (sum, requiredDowns) => sum + requiredDowns,
+    0,
+  );
+  const resizedChecks = resizeKeyDownChecks(cell.checks, totalRequiredDowns);
+  const downChecks = resizedChecks.filter((check) => !check.keyUp);
+  const releaseCheck = resizedChecks.find((check) => check.keyUp);
+  let releaseCellIndex = 0;
+
+  for (let index = requiredDownCounts.length - 1; index >= 0; index -= 1) {
+    if (requiredDownCounts[index] > 0) {
+      releaseCellIndex = index;
+      break;
+    }
+  }
+
+  let downOffset = 0;
+  const splitCells = drafts.map((draft, index) => {
+    const requiredDowns = requiredDownCounts[index];
+    const checks = downChecks.slice(downOffset, downOffset + requiredDowns);
+    downOffset += requiredDowns;
+
+    return createSplitCell(
+      draft,
+      releaseCheck && index === releaseCellIndex ? [...checks, releaseCheck] : checks,
+    );
+  });
+  const nextLines = project.lines.map((currentLine, lineIndex) => {
+    if (lineIndex !== position.lineIndex) {
+      return currentLine;
+    }
+
+    const cells = [
+      ...currentLine.cells.slice(0, position.cellIndex),
+      ...splitCells,
+      ...currentLine.cells.slice(position.cellIndex + 1),
+    ];
+
+    return {
+      ...currentLine,
+      text: normalizeLineText(cells),
+      cells,
     };
   });
   const nextProject = touchProject({ ...project, lines: nextLines });

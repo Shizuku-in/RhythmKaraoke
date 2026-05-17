@@ -5,10 +5,12 @@ import {
   MenuItem,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import ContentCutIcon from "@mui/icons-material/ContentCut";
 import DisabledByDefaultOutlinedIcon from "@mui/icons-material/DisabledByDefaultOutlined";
 import SquareOutlinedIcon from "@mui/icons-material/SquareOutlined";
 import type { CellContextMenuState } from "../app/types";
 import type { RhythmProject } from "../domain/rhythmProject";
+import { canSplitCell } from "../domain/rhythmProject";
 
 export function CellContextMenu(props: {
   cellContextMenu: CellContextMenuState | null;
@@ -16,6 +18,7 @@ export function CellContextMenu(props: {
   onClose: () => void;
   onConnect: () => void;
   onRemoveReleaseMarker: () => void;
+  onSplit: () => void;
   project: RhythmProject;
 }) {
   const {
@@ -24,6 +27,7 @@ export function CellContextMenu(props: {
     onClose,
     onConnect,
     onRemoveReleaseMarker,
+    onSplit,
     project,
   } = props;
   const contextCell = cellContextMenu
@@ -34,6 +38,7 @@ export function CellContextMenu(props: {
   const hasReleaseMarker = Boolean(
     contextCell?.checks.some((check) => check.keyUp),
   );
+  const canSplitContextCell = Boolean(contextCell && canSplitCell(contextCell));
 
   return (
     <Menu
@@ -59,6 +64,12 @@ export function CellContextMenu(props: {
           <AddIcon fontSize="small" />
         </ListItemIcon>
         <ListItemText>Connect</ListItemText>
+      </MenuItem>
+      <MenuItem disabled={!canSplitContextCell} onClick={onSplit}>
+        <ListItemIcon>
+          <ContentCutIcon fontSize="small" />
+        </ListItemIcon>
+        <ListItemText>Split</ListItemText>
       </MenuItem>
       <MenuItem
         onClick={
