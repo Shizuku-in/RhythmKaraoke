@@ -58,6 +58,17 @@ export interface CellPosition {
   cellIndex: number;
 }
 
+export interface RubyToken {
+  surface_form: string;
+  reading?: string;
+  pronunciation?: string;
+}
+
+export interface RubyCellDraft {
+  text: string;
+  ruby?: string;
+}
+
 export interface CheckRef extends CellPosition {
   checkIndex: number;
   check: CheckPoint;
@@ -145,6 +156,34 @@ function isCjkOrKanaOrHangul(grapheme: string): boolean {
   );
 }
 
+function isKanji(grapheme: string): boolean {
+  return /^\p{Script=Han}$/u.test(grapheme);
+}
+
+function isHiragana(grapheme: string): boolean {
+  return /^\p{Script=Hiragana}$/u.test(grapheme);
+}
+
+function isKatakana(grapheme: string): boolean {
+  return /^\p{Script=Katakana}$/u.test(grapheme);
+}
+
+function isKana(grapheme: string): boolean {
+  return isHiragana(grapheme) || isKatakana(grapheme);
+}
+
+function hasKanji(text: string): boolean {
+  return splitGraphemes(text).some(isKanji);
+}
+
+function hasKana(text: string): boolean {
+  return splitGraphemes(text).some(isKana);
+}
+
+function hasJapanese(text: string): boolean {
+  return splitGraphemes(text).some((grapheme) => isKana(grapheme) || isKanji(grapheme));
+}
+
 function isSingableEnd(grapheme: string): boolean {
   return isCjkOrKanaOrHangul(grapheme) || isAsciiWord(grapheme);
 }
@@ -173,6 +212,13 @@ function createCheck(keyUp = false): CheckPoint {
     id: nextId("check"),
     timeMs: null,
     keyUp,
+  };
+}
+
+function createCheckWithTime(timeMs: number | null, keyUp = false): CheckPoint {
+  return {
+    ...createCheck(keyUp),
+    timeMs,
   };
 }
 
@@ -303,6 +349,333 @@ function normalizeCell(cell: LyricCell): LyricCell {
   };
 }
 
+function normalizeLineText(cells: LyricCell[]): string {
+  return cells.map((cell) => cell.text).join("");
+}
+
+function kanaToHiragana(text: string): string {
+  return splitGraphemes(text)
+    .map((grapheme) => {
+      const code = grapheme.codePointAt(0);
+
+      if (code === undefined) {
+        return grapheme;
+      }
+
+      if (code >= 0x30a1 && code <= 0x30f6) {
+        return String.fromCodePoint(code - 0x60);
+      }
+
+      return grapheme;
+    })
+    .join("");
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isSmallKanaCombination(grapheme: string): boolean {
+  return /^[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]$/u.test(grapheme);
+}
+
+function isSmallTsu(grapheme: string): boolean {
+  return grapheme === "っ" || grapheme === "ッ";
+}
+
+function isProlongedSoundMark(grapheme: string): boolean {
+  return grapheme === "ー";
+}
+
+function isZeroMoraText(text: string): boolean {
+  return (
+    text.length === 0 ||
+    /^[\s\p{P}\p{S}]+$/u.test(text)
+  );
+}
+
+export function countJapaneseMora(text: string): number {
+  const normalized = kanaToHiragana(text);
+  const graphemes = splitGraphemes(normalized);
+  let count = 0;
+  let sawJapanese = false;
+
+  graphemes.forEach((grapheme) => {
+    if (isZeroMoraText(grapheme)) {
+      return;
+    }
+
+    if (isSmallKanaCombination(grapheme) && sawJapanese) {
+      return;
+    }
+
+    if (isKana(grapheme) || isKanji(grapheme) || isProlongedSoundMark(grapheme)) {
+      sawJapanese = true;
+      count += 1;
+      return;
+    }
+
+    if (/^[A-Za-z0-9]$/u.test(grapheme)) {
+      count += 1;
+    }
+  });
+
+  return count;
+}
+
+export function getRequiredKeyDownCount(cell: Pick<LyricCell, "ruby" | "text">): number {
+  const source = cell.ruby?.trim() || cell.text;
+
+  if (isZeroMoraText(source)) {
+    return 0;
+  }
+
+  return countJapaneseMora(source);
+}
+
+function getKnownDownTimes(checks: CheckPoint[]): Array<number | null> {
+  return orderChecks(checks)
+    .filter((check) => !check.keyUp)
+    .map((check) => check.timeMs);
+}
+
+function getDistributedDownTimes(
+  checks: CheckPoint[],
+  requiredDowns: number,
+): Array<number | null> {
+  if (requiredDowns <= 0) {
+    return [];
+  }
+
+  const knownTimes = getKnownDownTimes(checks);
+  const completeTimes = knownTimes.filter((timeMs): timeMs is number => timeMs !== null);
+
+  if (completeTimes.length >= 2) {
+    const startMs = Math.min(...completeTimes);
+    const endMs = Math.max(...completeTimes);
+
+    if (requiredDowns === 1) {
+      return [startMs];
+    }
+
+    return Array.from({ length: requiredDowns }, (_, index) =>
+      Math.round(startMs + ((endMs - startMs) * index) / (requiredDowns - 1)),
+    );
+  }
+
+  return Array.from({ length: requiredDowns }, (_, index) => knownTimes[index] ?? null);
+}
+
+export function resizeKeyDownChecks(
+  checks: CheckPoint[],
+  requiredDowns: number,
+): CheckPoint[] {
+  const orderedChecks = orderChecks(checks);
+  const downChecks = orderedChecks.filter((check) => !check.keyUp);
+  const releaseCheck = orderedChecks.find((check) => check.keyUp);
+  const times = getDistributedDownTimes(orderedChecks, requiredDowns);
+  const nextDownChecks = times.map((timeMs, index) => ({
+    ...(downChecks[index] ?? createCheck()),
+    timeMs,
+    keyUp: false,
+  }));
+
+  if (!releaseCheck) {
+    return nextDownChecks;
+  }
+
+  return [
+    ...nextDownChecks,
+    {
+      ...releaseCheck,
+      keyUp: true,
+    },
+  ];
+}
+
+function checksFromCoveredCells(cells: LyricCell[]): CheckPoint[] {
+  return cells.flatMap((cell) => orderChecks(cell.checks));
+}
+
+function createCellFromDraft(draft: RubyCellDraft, coveredCells: LyricCell[]): LyricCell {
+  const requiredDowns = getRequiredKeyDownCount(draft);
+  const checks =
+    coveredCells.length > 0
+      ? resizeKeyDownChecks(checksFromCoveredCells(coveredCells), requiredDowns)
+      : Array.from({ length: requiredDowns }, () => createCheckWithTime(null));
+
+  return normalizeCell({
+    id: nextId("cell"),
+    text: draft.text,
+    ruby: draft.ruby,
+    checks,
+    timeMs: null,
+    keyUp: false,
+  });
+}
+
+function splitKanaToDrafts(text: string): RubyCellDraft[] {
+  return splitGraphemes(text).reduce<RubyCellDraft[]>((drafts, grapheme) => {
+    const previous = drafts[drafts.length - 1];
+
+    if ((isSmallKanaCombination(grapheme) || isSmallTsu(grapheme)) && previous) {
+      previous.text += grapheme;
+      return drafts;
+    }
+
+    drafts.push({ text: grapheme });
+    return drafts;
+  }, []);
+}
+
+function pushRubyDraft(drafts: RubyCellDraft[], draft: RubyCellDraft): void {
+  if (!draft.text) {
+    return;
+  }
+
+  const graphemes = splitGraphemes(draft.text);
+  const previous = drafts[drafts.length - 1];
+
+  if (
+    graphemes[0] &&
+    isSmallTsu(graphemes[0]) &&
+    !draft.ruby &&
+    previous &&
+    !previous.ruby &&
+    hasKana(previous.text)
+  ) {
+    previous.text += graphemes[0];
+
+    const rest = graphemes.slice(1).join("");
+    if (rest) {
+      splitKanaToDrafts(rest).forEach((nextDraft) => drafts.push(nextDraft));
+    }
+    return;
+  }
+
+  drafts.push(draft);
+}
+
+function splitOtherToDrafts(text: string): RubyCellDraft[] {
+  return splitGraphemes(text).map((grapheme) => ({ text: grapheme }));
+}
+
+function splitTokenToDrafts(token: RubyToken): RubyCellDraft[] {
+  const surface = token.surface_form;
+
+  if (!surface) {
+    return [];
+  }
+
+  if (!hasJapanese(surface)) {
+    return splitOtherToDrafts(surface);
+  }
+
+  const reading = kanaToHiragana(token.reading || token.pronunciation || surface);
+
+  if (!hasKanji(surface)) {
+    return splitKanaToDrafts(surface);
+  }
+
+  if (!hasKana(surface)) {
+    return [{ text: surface, ruby: reading }];
+  }
+
+  const pieces: string[] = [];
+  let pattern = "";
+  let pendingKanji = "";
+
+  splitGraphemes(surface).forEach((grapheme) => {
+    if (isKanji(grapheme)) {
+      pendingKanji += grapheme;
+      return;
+    }
+
+    if (pendingKanji) {
+      pieces.push(pendingKanji);
+      pattern += "(.+)";
+      pendingKanji = "";
+    }
+
+    pieces.push(grapheme);
+    pattern += escapeRegExp(kanaToHiragana(grapheme));
+  });
+
+  if (pendingKanji) {
+    pieces.push(pendingKanji);
+    pattern += "(.+)";
+  }
+
+  const match = new RegExp(`^${pattern}$`, "u").exec(reading);
+
+  if (!match) {
+    return [{ text: surface, ruby: reading }];
+  }
+
+  let captureIndex = 1;
+
+  return pieces.flatMap((piece) => {
+    if (isKanji(splitGraphemes(piece)[0])) {
+      const ruby = match[captureIndex] || "";
+      captureIndex += 1;
+      return [{ text: piece, ruby }];
+    }
+
+    return splitKanaToDrafts(piece);
+  });
+}
+
+export function tokensToRubyCellDrafts(
+  lineText: string,
+  tokens: RubyToken[],
+): RubyCellDraft[] {
+  const drafts: RubyCellDraft[] = [];
+
+  tokens
+    .flatMap((token) => splitTokenToDrafts(token))
+    .forEach((draft) => pushRubyDraft(drafts, draft));
+
+  if (drafts.map((draft) => draft.text).join("") !== lineText) {
+    return splitOtherToDrafts(lineText);
+  }
+
+  return drafts.map((draft) => ({
+    text: draft.text,
+    ruby: draft.ruby && draft.ruby !== kanaToHiragana(draft.text) ? draft.ruby : undefined,
+  }));
+}
+
+function getCoveredCells(
+  oldCells: LyricCell[],
+  startOffset: number,
+  endOffset: number,
+): LyricCell[] {
+  let offset = 0;
+
+  return oldCells.filter((cell) => {
+    const cellStart = offset;
+    const cellEnd = cellStart + cell.text.length;
+    offset = cellEnd;
+    return cellStart < endOffset && cellEnd > startOffset;
+  });
+}
+
+export function createRubyCellsForLine(
+  lineText: string,
+  tokens: RubyToken[],
+  oldCells: LyricCell[] = [],
+): LyricCell[] {
+  const drafts = tokensToRubyCellDrafts(lineText, tokens);
+  let offset = 0;
+
+  return drafts.map((draft) => {
+    const startOffset = offset;
+    const endOffset = startOffset + draft.text.length;
+    offset = endOffset;
+    return createCellFromDraft(draft, getCoveredCells(oldCells, startOffset, endOffset));
+  });
+}
+
 function updateCell(
   project: RhythmProject,
   position: CellPosition,
@@ -331,6 +704,113 @@ function updateCell(
   });
 
   return touchProject({ ...project, lines: nextLines });
+}
+
+function pointIndexForCell(project: RhythmProject, position: CellPosition): number {
+  const refs = getCheckRefs(project);
+  const index = refs.findIndex(
+    (ref) => ref.lineIndex === position.lineIndex && ref.cellIndex === position.cellIndex,
+  );
+
+  return index === -1 ? clampPointIndex(project, findFirstUntimedPointIndex(project)) : index;
+}
+
+export function setCellRuby(
+  project: RhythmProject,
+  position: CellPosition,
+  ruby: string,
+): EditResult {
+  const normalizedRuby = ruby.trim();
+  const nextProject = updateCell(project, position, (cell) => {
+    const nextCell = {
+      ...cell,
+      ruby: normalizedRuby || undefined,
+    };
+
+    return {
+      ...nextCell,
+      checks: resizeKeyDownChecks(cell.checks, getRequiredKeyDownCount(nextCell)),
+    };
+  });
+
+  return {
+    project: nextProject,
+    pointIndex: pointIndexForCell(nextProject, position),
+  };
+}
+
+export function mergeCellWithNext(
+  project: RhythmProject,
+  position: CellPosition,
+): EditResult & { selectedCell: CellPosition } {
+  const line = project.lines[position.lineIndex];
+  const cell = line?.cells[position.cellIndex];
+  const nextCell = line?.cells[position.cellIndex + 1];
+
+  if (!line || !cell || !nextCell) {
+    return {
+      project,
+      pointIndex: pointIndexForCell(project, position),
+      selectedCell: position,
+    };
+  }
+
+  const mergedRuby = `${cell.ruby ?? ""}${nextCell.ruby ?? ""}`;
+  const mergedCellBase: LyricCell = {
+    ...cell,
+    text: cell.text + nextCell.text,
+    ruby: mergedRuby || undefined,
+    checks: [],
+  };
+  const mergedCell = normalizeCell({
+    ...mergedCellBase,
+    checks: resizeKeyDownChecks(
+      checksFromCoveredCells([cell, nextCell]),
+      getRequiredKeyDownCount(mergedCellBase),
+    ),
+  });
+  const nextLines = project.lines.map((currentLine, lineIndex) => {
+    if (lineIndex !== position.lineIndex) {
+      return currentLine;
+    }
+
+    return {
+      ...currentLine,
+      text: normalizeLineText([
+        ...currentLine.cells.slice(0, position.cellIndex),
+        mergedCell,
+        ...currentLine.cells.slice(position.cellIndex + 2),
+      ]),
+      cells: [
+        ...currentLine.cells.slice(0, position.cellIndex),
+        mergedCell,
+        ...currentLine.cells.slice(position.cellIndex + 2),
+      ],
+    };
+  });
+  const nextProject = touchProject({ ...project, lines: nextLines });
+
+  return {
+    project: nextProject,
+    pointIndex: pointIndexForCell(nextProject, position),
+    selectedCell: position,
+  };
+}
+
+export function applyAutoRuby(
+  project: RhythmProject,
+  tokenizedLines: RubyToken[][],
+): EditResult {
+  const nextLines = project.lines.map((line, lineIndex) => ({
+    ...line,
+    cells: createRubyCellsForLine(line.text, tokenizedLines[lineIndex] ?? [], line.cells),
+  }));
+  const nextProject = touchProject({ ...project, lines: nextLines });
+
+  return {
+    project: nextProject,
+    pointIndex: clampPointIndex(nextProject, findFirstUntimedPointIndex(nextProject)),
+  };
 }
 
 export function getCheckRefs(project: RhythmProject): CheckRef[] {

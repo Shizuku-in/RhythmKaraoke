@@ -7,8 +7,11 @@ import {
   CssBaseline,
   Divider,
   LinearProgress,
+  Paper,
+  Popper,
   Slider,
   Stack,
+  TextField,
   ThemeProvider,
   ToggleButton,
   ToggleButtonGroup,
@@ -31,6 +34,8 @@ import TextSnippetIcon from "@mui/icons-material/TextSnippet";
 import TimerIcon from "@mui/icons-material/Timer";
 import UndoIcon from "@mui/icons-material/Undo";
 import RedoIcon from "@mui/icons-material/Redo";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import MergeTypeIcon from "@mui/icons-material/MergeType";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
@@ -39,6 +44,7 @@ import {
   type EditorMode,
   type RhythmProject,
   addCheckAtCell,
+  applyAutoRuby,
   clampPointIndex,
   clearChecksAtCell,
   clearTimeAtPoint,
@@ -52,11 +58,14 @@ import {
   removeLastCheckAtCell,
   removePreviousTime,
   serializeProject,
+  setCellRuby,
   setKeyUpAtPoint,
   setTimeAtPoint,
+  mergeCellWithNext,
   updateAudioMetadata,
   validateProject,
 } from "./domain/rhythmProject";
+import { tokenizeRubyLines } from "./platform/autoRuby";
 import {
   type AudioSelection,
   audioUrlFromPath,
@@ -145,11 +154,21 @@ function App() {
   const [durationMs, setDurationMs] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [isAutoRubyRunning, setIsAutoRubyRunning] = useState(false);
+  const [rubyEditorOpen, setRubyEditorOpen] = useState(false);
+  const [rubyInput, setRubyInput] = useState("");
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const editorHostRef = useRef<HTMLDivElement | null>(null);
+  const cellButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const spacePressRef = useRef<SpacePress | null>(null);
 
   const checkRefs = useMemo(() => getCheckRefs(project), [project]);
   const currentRef = checkRefs[pointIndex] ?? null;
+  const selectedCellData =
+    project.lines[selectedCell.lineIndex]?.cells[selectedCell.cellIndex] ?? null;
+  const rubyAnchorEl = selectedCellData
+    ? cellButtonRefs.current.get(selectedCellData.id) ?? null
+    : null;
   const validationIssues = useMemo(() => validateProject(project), [project]);
   const validationErrors = validationIssues.filter(
     (issue) => issue.severity === "error",
@@ -175,6 +194,70 @@ function App() {
     },
     [pointIndex, project, selectedCell],
   );
+
+  const focusEditorHost = useCallback(() => {
+    window.setTimeout(() => editorHostRef.current?.focus(), 0);
+  }, []);
+
+  const openRubyEditor = useCallback(() => {
+    const cell = project.lines[selectedCell.lineIndex]?.cells[selectedCell.cellIndex];
+
+    if (!cell) {
+      return;
+    }
+
+    setRubyInput(cell.ruby ?? "");
+    setRubyEditorOpen(true);
+  }, [project, selectedCell]);
+
+  const closeRubyEditor = useCallback(() => {
+    setRubyEditorOpen(false);
+    focusEditorHost();
+  }, [focusEditorHost]);
+
+  const commitRubyEdit = useCallback(() => {
+    const result = setCellRuby(project, selectedCell, rubyInput);
+    commitProject(result.project, result.pointIndex, selectedCell);
+    setRubyEditorOpen(false);
+    focusEditorHost();
+  }, [commitProject, focusEditorHost, project, rubyInput, selectedCell]);
+
+  const connectSelectedCell = useCallback(() => {
+    const result = mergeCellWithNext(project, selectedCell);
+    const mergedCell =
+      result.project.lines[result.selectedCell.lineIndex]?.cells[
+        result.selectedCell.cellIndex
+      ] ?? null;
+
+    commitProject(result.project, result.pointIndex, result.selectedCell);
+    setRubyInput(mergedCell?.ruby ?? "");
+    setRubyEditorOpen(Boolean(mergedCell));
+    focusEditorHost();
+  }, [commitProject, focusEditorHost, project, selectedCell]);
+
+  const runAutoRuby = useCallback(async () => {
+    if (project.lines.length === 0) {
+      return;
+    }
+
+    setIsAutoRubyRunning(true);
+    setStatus("Auto Ruby initializing...");
+
+    try {
+      const tokenizedLines = await tokenizeRubyLines(project.lines.map((line) => line.text));
+      const result = applyAutoRuby(project, tokenizedLines);
+      const nextSelectedCell = getFirstCellPosition(result.project);
+
+      commitProject(result.project, result.pointIndex, nextSelectedCell);
+      setRubyEditorOpen(false);
+      setStatus("Auto Ruby applied");
+      focusEditorHost();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Auto Ruby failed");
+    } finally {
+      setIsAutoRubyRunning(false);
+    }
+  }, [commitProject, focusEditorHost, project]);
 
   const undo = useCallback(() => {
     setHistory((previous) => {
@@ -422,6 +505,12 @@ function App() {
         return;
       }
 
+      if (event.key === "F2") {
+        event.preventDefault();
+        openRubyEditor();
+        return;
+      }
+
       if (key === "a") {
         event.preventDefault();
         void play();
@@ -535,6 +624,7 @@ function App() {
       stop,
       tagPoint,
       undo,
+      openRubyEditor,
     ],
   );
 
@@ -632,6 +722,17 @@ function App() {
                   Export
                 </Button>
               </Tooltip>
+              <Tooltip title="Auto Ruby">
+                <span>
+                  <Button
+                    disabled={isAutoRubyRunning || project.lines.length === 0}
+                    onClick={() => void runAutoRuby()}
+                    startIcon={<AutoAwesomeIcon />}
+                  >
+                    Auto Ruby
+                  </Button>
+                </span>
+              </Tooltip>
             </Stack>
             <ToggleButtonGroup
               exclusive
@@ -663,7 +764,7 @@ function App() {
         </AppBar>
 
         <Box className="workspace">
-          <Box className="editor-pane">
+          <Box className="editor-pane" ref={editorHostRef} tabIndex={-1}>
             <Box className="editor-header">
               <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                 <TimerIcon color="primary" />
@@ -716,11 +817,19 @@ function App() {
                         return (
                           <LyricCellView
                             cellText={cell.text}
+                            ruby={cell.ruby}
                             checks={cell.checks}
                             isCurrent={isCurrent}
                             isSelected={effectiveMode === "check" && isSelected}
                             key={cell.id}
                             onSelect={() => handleCellSelect({ lineIndex, cellIndex })}
+                            refCallback={(element) => {
+                              if (element) {
+                                cellButtonRefs.current.set(cell.id, element);
+                              } else {
+                                cellButtonRefs.current.delete(cell.id);
+                              }
+                            }}
                           />
                         );
                       })}
@@ -765,6 +874,43 @@ function App() {
             </Stack>
           </Box>
         </Box>
+
+        <Popper
+          anchorEl={rubyAnchorEl}
+          className="ruby-editor-popper"
+          open={rubyEditorOpen && Boolean(rubyAnchorEl)}
+          placement="top-start"
+        >
+          <Paper className="ruby-editor-paper" elevation={6} role="dialog">
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <TextField
+                autoFocus
+                label="Ruby"
+                onChange={(event) => setRubyInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitRubyEdit();
+                  }
+
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    closeRubyEditor();
+                  }
+                }}
+                size="small"
+                value={rubyInput}
+              />
+              <Button
+                onClick={connectSelectedCell}
+                startIcon={<MergeTypeIcon />}
+                variant="outlined"
+              >
+                连接
+              </Button>
+            </Stack>
+          </Paper>
+        </Popper>
 
         <Box className="transport">
           <audio
@@ -867,12 +1013,14 @@ function App() {
 
 function LyricCellView(props: {
   cellText: string;
+  ruby?: string;
   checks: CheckRef["check"][];
   isCurrent: boolean;
   isSelected: boolean;
   onSelect: () => void;
+  refCallback: (element: HTMLButtonElement | null) => void;
 }) {
-  const { cellText, checks, isCurrent, isSelected, onSelect } = props;
+  const { cellText, ruby, checks, isCurrent, isSelected, onSelect, refCallback } = props;
   const orderedChecks = [
     ...checks.filter((check) => !check.keyUp),
     ...checks.filter((check) => check.keyUp),
@@ -893,8 +1041,10 @@ function LyricCellView(props: {
         event.currentTarget.blur();
         onSelect();
       }}
+      ref={refCallback}
       type="button"
     >
+      {ruby ? <span className="cell-ruby">{ruby}</span> : <span className="cell-ruby" />}
       <span className="cell-text">{cellText === " " ? "\u00a0" : cellText}</span>
       <span className="check-row">
         {orderedChecks.map((check, checkIndex) => (
