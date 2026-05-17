@@ -8,9 +8,17 @@ import AddIcon from "@mui/icons-material/Add";
 import ContentCutIcon from "@mui/icons-material/ContentCut";
 import DisabledByDefaultOutlinedIcon from "@mui/icons-material/DisabledByDefaultOutlined";
 import SquareOutlinedIcon from "@mui/icons-material/SquareOutlined";
+import { useRef } from "react";
 import type { CellContextMenuState } from "../app/types";
 import type { RhythmProject } from "../domain/rhythmProject";
 import { canSplitCell } from "../domain/rhythmProject";
+
+interface CellContextMenuViewState {
+  anchorPosition: { left: number; top: number };
+  canConnect: boolean;
+  canSplit: boolean;
+  hasReleaseMarker: boolean;
+}
 
 export function CellContextMenu(props: {
   cellContextMenu: CellContextMenuState | null;
@@ -30,34 +38,39 @@ export function CellContextMenu(props: {
     onSplit,
     project,
   } = props;
-  const contextCell = cellContextMenu
-    ? project.lines[cellContextMenu.position.lineIndex]?.cells[
+  const lastViewStateRef = useRef<CellContextMenuViewState | null>(null);
+
+  if (cellContextMenu) {
+    const contextCell = project.lines[cellContextMenu.position.lineIndex]?.cells[
         cellContextMenu.position.cellIndex
-      ]
-    : null;
-  const hasReleaseMarker = Boolean(
-    contextCell?.checks.some((check) => check.keyUp),
-  );
-  const canSplitContextCell = Boolean(contextCell && canSplitCell(contextCell));
+      ];
+
+    lastViewStateRef.current = {
+      anchorPosition: { left: cellContextMenu.mouseX, top: cellContextMenu.mouseY },
+      canConnect: Boolean(
+        project.lines[cellContextMenu.position.lineIndex]?.cells[
+          cellContextMenu.position.cellIndex + 1
+        ],
+      ),
+      canSplit: Boolean(contextCell && canSplitCell(contextCell)),
+      hasReleaseMarker: Boolean(
+        contextCell?.checks.some((check) => check.keyUp),
+      ),
+    };
+  }
+
+  const viewState = lastViewStateRef.current;
+  const hasReleaseMarker = viewState?.hasReleaseMarker ?? false;
 
   return (
     <Menu
-      anchorPosition={
-        cellContextMenu
-          ? { left: cellContextMenu.mouseX, top: cellContextMenu.mouseY }
-          : undefined
-      }
+      anchorPosition={viewState?.anchorPosition}
       anchorReference="anchorPosition"
       onClose={onClose}
       open={Boolean(cellContextMenu)}
     >
       <MenuItem
-        disabled={Boolean(
-          cellContextMenu &&
-            !project.lines[cellContextMenu.position.lineIndex]?.cells[
-              cellContextMenu.position.cellIndex + 1
-            ],
-        )}
+        disabled={!viewState?.canConnect}
         onClick={onConnect}
       >
         <ListItemIcon>
@@ -65,7 +78,7 @@ export function CellContextMenu(props: {
         </ListItemIcon>
         <ListItemText>Connect</ListItemText>
       </MenuItem>
-      <MenuItem disabled={!canSplitContextCell} onClick={onSplit}>
+      <MenuItem disabled={!viewState?.canSplit} onClick={onSplit}>
         <ListItemIcon>
           <ContentCutIcon fontSize="small" />
         </ListItemIcon>
